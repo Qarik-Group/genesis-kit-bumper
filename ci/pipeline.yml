@@ -1,0 +1,141 @@
+meta:
+  git_uri: (( param "Please provide git_uri" ))
+  git_branch: (( param "Please provide git_branch" ))
+  github_private_key: (( param "Please provide github_private_key" ))
+  github_user: (( param "Please provide github_private_key" ))
+  github_email: (( param "Please provide github_email" ))
+  github_auth_token: (( param "Please provide github_private_key" ))
+  kit_release_org: (( param "Please set kit_release_org" ))
+  kit_release_repo: (( param "Please set kit_release_org" ))
+  kit_version_file: (( param "Please set kit_version_file" ))
+  kit_name: (( param "Please specify kit_name" ))
+
+jobs:
+- name: bump-kit
+  plan:
+  - in_parallel:
+    - { get: repo }
+    - { get: kit-release }
+  - task: list-kits
+    config:
+      platform: linux
+      image_resource:
+        type: registry-image
+        source:
+          repository: starkandwayne/genesis
+      inputs:
+      - name: repo
+      params:
+        GENESIS_KIT_NAME: (( grab meta.kit_name ))
+      run:
+        dir: repo
+        path: sh
+        args:
+        - -ce
+        - |
+          export VAULT_ADDR=$(bosh int .genesis/config --path /secrets_provider/url)
+          # create ~/.saferc
+          safe target --no-strongbox -k ${VAULT_ADDR} deployments-vault
+          genesis list-kits ${GENESIS_KIT_NAME} -u
+  - task: fetch-kit
+    config:
+      platform: linux
+      image_resource:
+        type: registry-image
+        source:
+          repository: starkandwayne/genesis
+      inputs:
+      - name: repo
+      - name: kit-release
+      outputs:
+      - name: repo
+      params:
+        GITHUB_USER: (( grab meta.github_user ))
+        GITHUB_EMAIL: (( grab meta.github_email ))
+        GITHUB_AUTH_TOKEN: (( grab meta.github_auth_token ))
+        KIT_VERSION_FILE: (( grab meta.kit_version_file ))
+        GENESIS_KIT_NAME: (( grab meta.kit_name ))
+      run:
+        dir: repo
+        path: sh
+        args:
+        - -ce
+        - |
+          export VAULT_ADDR=$(bosh int .genesis/config --path /secrets_provider/url)
+          # create ~/.saferc
+          safe target --no-strongbox -k ${VAULT_ADDR} deployments-vault
+          genesis fetch-kit ${GENESIS_KIT_NAME}/$(cat ../kit-release/version)
+          sed -i'' "/^kit:/,/^  version:/{s/version.*/version: $(cat ../kit-release/version)/}" ${KIT_VERSION_FILE}
+          git config --global user.email "${GITHUB_EMAIL}"
+          git config --global user.name "${GITHUB_USER}"
+          git add .
+          git commit -m "[concourse] bump kit ${GENESIS_KIT_NAME} to version $(cat ../kit-release/version)"
+  - put: repo
+    params:
+      repository: repo
+      rebase: true
+
+- name: bump-genesis
+  plan:
+  - in_parallel:
+    - { get: repo }
+    - { get: genesis-release }
+  - task: update-genesis
+    config:
+      platform: linux
+      image_resource:
+        type: registry-image
+        source:
+          repository: starkandwayne/genesis
+      inputs:
+      - name: repo
+      - name: genesis-release
+      outputs:
+      - name: repo
+      params:
+        KIT_VERSION_FILE: (( grab meta.kit_version_file ))
+        GENESIS_KIT_NAME: (( grab meta.kit_name ))
+        GITHUB_USER: (( grab meta.github_user ))
+        GITHUB_EMAIL: (( grab meta.github_email ))
+      run:
+        dir: repo
+        path: sh
+        args:
+        - -ce
+        - |
+          export VAULT_ADDR=$(bosh int .genesis/config --path /secrets_provider/url)
+          # create ~/.saferc
+          safe target --no-strongbox -k ${VAULT_ADDR} deployments-vault
+          chmod +x ../genesis-release/genesis
+          ../genesis-release/genesis embed
+          git diff --exit-code .genesis/bin/genesis
+          if [ $? -eq 1 ]; then
+            git config --global user.email "${GITHUB_EMAIL}"
+            git config --global user.name "${GITHUB_NAME}"
+            git add .
+            git commit -m "[concourse] bump genesis to $(genesis version)"
+          fi
+  - put: repo
+    params:
+      repository: repo
+      rebase: true
+
+resources:
+- name: repo
+  type: git
+  source:
+    uri: (( grab meta.git_uri ))
+    branch: (( grab meta.git_branch ))
+    private_key: (( grab meta.github_private_key ))
+- name: kit-release
+  type: github-release
+  source:
+    user:         (( grab meta.kit_release_org ))
+    repository:   (( grab meta.kit_release_repo ))
+    access_token: (( grab meta.github_auth_token ))
+- name: genesis-release
+  type: github-release
+  source:
+    user:         "genesis-community"
+    repository:   "genesis"
+    access_token: (( grab meta.github_auth_token ))

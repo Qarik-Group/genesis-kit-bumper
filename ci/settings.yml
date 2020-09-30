@@ -1,0 +1,13 @@
+meta:
+  git_uri: git@github.com:rkoster/minio-deployments.git
+  git_branch: master
+  github_private_key: ((github.private_key))
+  github_user: "dummy"
+  github_email: "dummy@dummy.com"
+  github_auth_token: "dummy"
+  kit_release_org: "genesis-community"
+  kit_release_repo: "minio-genesis-kit"
+  kit_name: "minio"
+  kit_version_file: snw-rkoster-lab.yml
+  vault_role_id: ((vault.role-id))
+  vault_secret_id: ((vault.secret-id))
