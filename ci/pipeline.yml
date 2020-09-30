@@ -15,7 +15,8 @@ jobs:
   plan:
   - in_parallel:
     - { get: repo }
-    - { get: kit-release }
+    - { get: kit-release, trigger: true }
+    - { get: genesis-release }
   - task: list-kits
     config:
       platform: linux
@@ -37,6 +38,41 @@ jobs:
           # create ~/.saferc
           safe target --no-strongbox -k ${VAULT_ADDR} deployments-vault
           genesis list-kits ${GENESIS_KIT_NAME} -u
+  - task: update-genesis
+    config:
+      platform: linux
+      image_resource:
+        type: registry-image
+        source:
+          repository: starkandwayne/genesis
+      inputs:
+      - name: repo
+      - name: genesis-release
+      outputs:
+      - name: repo
+      params:
+        KIT_VERSION_FILE: (( grab meta.kit_version_file ))
+        GENESIS_KIT_NAME: (( grab meta.kit_name ))
+        GITHUB_USER: (( grab meta.github_user ))
+        GITHUB_EMAIL: (( grab meta.github_email ))
+      run:
+        dir: repo
+        path: sh
+        args:
+        - -c
+        - |
+          export VAULT_ADDR=$(bosh int .genesis/config --path /secrets_provider/url)
+          # create ~/.saferc
+          safe target --no-strongbox -k ${VAULT_ADDR} deployments-vault
+          chmod +x ../genesis-release/genesis
+          ../genesis-release/genesis embed
+          git diff --exit-code .genesis/bin/genesis
+          if [ $? -eq 1 ]; then
+            git config --global user.email "${GITHUB_EMAIL}"
+            git config --global user.name "${GITHUB_USER}"
+            git add .
+            git commit -m "[concourse] bump genesis to $(genesis version)"
+          fi
   - task: fetch-kit
     config:
       platform: linux
@@ -70,51 +106,6 @@ jobs:
           git config --global user.name "${GITHUB_USER}"
           git add .
           git commit -m "[concourse] bump kit ${GENESIS_KIT_NAME} to version $(cat ../kit-release/version)"
-  - put: repo
-    params:
-      repository: repo
-      rebase: true
-
-- name: bump-genesis
-  plan:
-  - in_parallel:
-    - { get: repo }
-    - { get: genesis-release }
-  - task: update-genesis
-    config:
-      platform: linux
-      image_resource:
-        type: registry-image
-        source:
-          repository: starkandwayne/genesis
-      inputs:
-      - name: repo
-      - name: genesis-release
-      outputs:
-      - name: repo
-      params:
-        KIT_VERSION_FILE: (( grab meta.kit_version_file ))
-        GENESIS_KIT_NAME: (( grab meta.kit_name ))
-        GITHUB_USER: (( grab meta.github_user ))
-        GITHUB_EMAIL: (( grab meta.github_email ))
-      run:
-        dir: repo
-        path: sh
-        args:
-        - -ce
-        - |
-          export VAULT_ADDR=$(bosh int .genesis/config --path /secrets_provider/url)
-          # create ~/.saferc
-          safe target --no-strongbox -k ${VAULT_ADDR} deployments-vault
-          chmod +x ../genesis-release/genesis
-          ../genesis-release/genesis embed
-          git diff --exit-code .genesis/bin/genesis
-          if [ $? -eq 1 ]; then
-            git config --global user.email "${GITHUB_EMAIL}"
-            git config --global user.name "${GITHUB_NAME}"
-            git add .
-            git commit -m "[concourse] bump genesis to $(genesis version)"
-          fi
   - put: repo
     params:
       repository: repo
